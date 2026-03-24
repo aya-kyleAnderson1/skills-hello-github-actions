@@ -33,7 +33,7 @@ jobs:
 
           while IFS= read -r file; do
             # Only check JSON files inside a pipeline folder
-            if [[ "$file" == *"/pipeline/"* && "$file" == *.json ]]; then
+            if [[ "$file" == *"/pipelines/"* && "$file" == *.json ]]; then
               filename=$(basename "$file" .json)
 
               # If the filename starts with Pending_, it must be in a Pending folder
