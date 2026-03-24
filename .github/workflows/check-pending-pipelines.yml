@@ -1,0 +1,57 @@
+name: Check Pending Pipelines
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  check-pending-pipelines:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+
+      - name: Get changed files
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
+
+      - name: Validate Pending_ pipelines are in Pending folder
+        run: |
+          failed=0
+
+          while IFS= read -r file; do
+            # Only check JSON files inside a pipeline folder
+            if [[ "$file" == *"/pipeline/"* && "$file" == *.json ]]; then
+              filename=$(basename "$file" .json)
+
+              # If the filename starts with Pending_, it must be in a Pending folder
+              if [[ "$filename" == Pending_* ]]; then
+                if [[ "$file" != *"/Pending/"* ]]; then
+                  echo "ERROR: Pipeline '$filename' starts with 'Pending_' but is not in the Pending folder."
+                  echo "File: $file"
+                  failed=1
+                else
+                  echo "OK: $file"
+                fi
+              fi
+            fi
+          done < changed_files.txt
+
+          if [[ $failed -ne 0 ]]; then
+            echo "Validation failed."
+            exit 1
+          fi
+
+          echo "All Pending_ pipeline checks passed."
