@@ -7,6 +7,11 @@ on:
       - synchronize
       - reopened
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   check-pending-pipelines:
     runs-on: ubuntu-latest
@@ -27,31 +32,83 @@ jobs:
           echo "Changed files:"
           cat changed_files.txt
 
-      - name: Validate Pending_ pipelines are in Pending folder
+      - name: Validate pending pipeline rules
+        id: validate
         run: |
           failed=0
+
+          {
+            echo "<!-- pending-pipeline-check -->"
+            echo "## Pending Pipeline Check"
+            echo
+          } > pr_comment.md
 
           while IFS= read -r file; do
             # Only check JSON files inside a pipeline folder
             if [[ "$file" == *"/pipelines/"* && "$file" == *.json ]]; then
               filename=$(basename "$file" .json)
 
-              # If the filename starts with Pending_, it must be in a Pending folder
+              is_pending_name=0
+              is_pending_folder=0
+
               if [[ "$filename" == Pending_* ]]; then
-                if [[ "$file" != *"/Pending/"* ]]; then
-                  echo "ERROR: Pipeline '$filename' starts with 'Pending_' but is not in the Pending folder."
-                  echo "File: $file"
-                  failed=1
-                else
-                  echo "OK: $file"
-                fi
+                is_pending_name=1
+              fi
+
+              if [[ "$file" == *"/Pending/"* ]]; then
+                is_pending_folder=1
+              fi
+
+              if [[ $is_pending_name -eq 1 && $is_pending_folder -eq 0 ]]; then
+                echo "- ❌ \`$file\` starts with \`Pending_\` but is not in the \`Pending\` folder." >> pr_comment.md
+                failed=1
+              fi
+
+              if [[ $is_pending_folder -eq 1 && $is_pending_name -eq 0 ]]; then
+                echo "- ❌ \`$file\` is in the \`Pending\` folder but does not start with \`Pending_\`." >> pr_comment.md
+                failed=1
               fi
             fi
           done < changed_files.txt
 
-          if [[ $failed -ne 0 ]]; then
-            echo "Validation failed."
-            exit 1
+          if [[ $failed -eq 0 ]]; then
+            echo "has_failures=false" >> "$GITHUB_OUTPUT"
+          else
+            echo >> pr_comment.md
+            echo "Please fix the pending pipeline naming/folder issues above." >> pr_comment.md
+            echo "has_failures=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "All Pending_ pipeline checks passed."
+      - name: Find previous bot comment
+        id: find_comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          comment_id=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --paginate \
+            --jq '.[] | select(.body | contains("<!-- pending-pipeline-check -->")) | .id' \
+            | tail -n 1)
+
+          echo "comment_id=$comment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Delete previous bot comment if it exists
+        if: steps.find_comment.outputs.comment_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --method DELETE \
+            repos/${{ github.repository }}/issues/comments/${{ steps.find_comment.outputs.comment_id }}
+
+      - name: Post new PR comment if validation failed
+        if: steps.validate.outputs.has_failures == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file pr_comment.md
+
+      - name: Fail workflow if validation failed
+        if: steps.validate.outputs.has_failures == 'true'
+        run: |
+          echo "Pending pipeline validation failed."
+          exit 1
