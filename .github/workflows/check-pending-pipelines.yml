@@ -44,6 +44,7 @@ jobs:
           } > pr_comment.md
 
           while IFS= read -r file; do
+            # Only check JSON files inside a pipeline folder
             if [[ "$file" == *"/pipelines/"* && "$file" == *.json ]]; then
               filename=$(basename "$file" .json)
 
